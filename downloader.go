@@ -35,12 +35,19 @@ type DownloaderImpl struct {
 	chapter_regex *regexp.Regexp
 	title_regex   *regexp.Regexp
 	content_regex *regexp.Regexp
+	thread_num    int
 }
 
 func (d *DownloaderImpl) Download(url string) (Book, error) {
 	d.Client = &http.Client{}
 	book := Book{}
-	resp, err := d.Client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logrus.WithField("downloader", "Download").Error("Error when create request")
+		return book, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36")
+	resp, err := d.Client.Do(req)
 	if err != nil {
 		logrus.WithField("downloader", "Download").Error("Error when get book main page")
 		return book, err
@@ -108,7 +115,7 @@ func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
 	var chapters []Chapter
 	var wg sync.WaitGroup
 	var mut sync.Mutex
-	ch := make(chan struct{}, 100)
+	ch := make(chan struct{}, d.thread_num)
 	for url_index, url := range urls {
 		wg.Add(1)
 		go func(index int, url string) {
@@ -175,7 +182,7 @@ func (d *DownloaderImpl) Get_Chapter_Content(url string) (title string, content 
 	title = match[1]
 	contents := d.content_regex.FindAllStringSubmatch(string(body), -1)
 	for _, c := range contents {
-		content = content + c[1]
+		content = content + c[1] + "\n"
 	}
 	logrus.WithField("component", "Get_Chapter_Content").Infof("got chapter content: %s", title)
 	return title, content, nil
