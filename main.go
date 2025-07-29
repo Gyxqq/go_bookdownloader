@@ -36,7 +36,21 @@ func main() {
 	max_threads := flag.Int("t", 20, "下载线程数")
 	config := flag.String("c", "", "配置文件")
 	outname := flag.String("o", "", "输出文件名")
+	log_level := flag.String("l", "info", "日志等级")
+	input := flag.String("f", "", "从文件读入主页内容")
 	flag.Parse()
+	switch *log_level {
+	case "debug":
+		logrus.SetLevel(logrus.DebugLevel)
+	case "info":
+		logrus.SetLevel(logrus.InfoLevel)
+	case "warn":
+		logrus.SetLevel(logrus.WarnLevel)
+	case "error":
+		logrus.SetLevel(logrus.ErrorLevel)
+	default:
+		logrus.SetLevel(logrus.InfoLevel)
+	}
 	if *mainpage == "" {
 		fmt.Print("输入小说主页url:")
 		fmt.Scanln(&mainpage)
@@ -56,17 +70,34 @@ func main() {
 			logrus.WithField("component", "main").Fatal("err config file")
 		}
 		down.chapter_regex = regexp.MustCompile(conf.Chapter_regex)
+		logrus.WithField("component", "main").Infof("load chapter regex %s", conf.Chapter_regex)
 		down.content_regex = regexp.MustCompile(conf.Content_regex)
+		logrus.WithField("component", "main").Infof("load content regex %s", conf.Content_regex)
 		down.name_regex = regexp.MustCompile(conf.Name_regex)
+		logrus.WithField("component", "main").Infof("load name regex %s", conf.Name_regex)
 		down.title_regex = regexp.MustCompile(conf.Title_regex)
+		logrus.WithField("component", "main").Infof("load title regex %s", conf.Title_regex)
 	} else {
 		down.name_regex = regexp.MustCompile(`<meta\s+property="og:novel:book_name"\s+content="([^"]+)"\s*/?>`)
 		down.chapter_regex = regexp.MustCompile(`<dd><a\s+href\s*=\s*"([^"]+)">`)
 		down.title_regex = regexp.MustCompile(`<h1\s+class="wap_none">\s*(.*?)\s*</h1>`)
 		down.content_regex = regexp.MustCompile(`<br\s*/?>\s*([^<]+?)\s*<br\s*/?>`)
 	}
+	var err error
+	var book Book
+	if *input == "" {
+		book, err = down.Download(*mainpage)
+	} else {
+		var data []byte
+		data, err = os.ReadFile(*input)
+		if err != nil {
+			logrus.WithField("downloader", "Download").Errorf("Error when read input file %s", err)
+			book, err = down.Download(*mainpage)
+		}
+		logrus.WithField("downloader", "Download").Info("Read mainpage from file")
+		book, err = down.Download_from_file(string(data), *mainpage)
+	}
 
-	book, err := down.Download(*mainpage)
 	if err != nil {
 		logrus.WithField("downloader", "Download").Errorf("Error when download book %s", err)
 		return

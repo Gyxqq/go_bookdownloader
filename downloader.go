@@ -15,6 +15,7 @@ import (
 
 type Downloader interface {
 	Download(url string) (Book, error)
+	Download_from_file(file string) (Book, error)
 	Get_Book_Name(desc string) (string, error)
 	Get_Chapter_Urls(content string) (urls []string, prefix bool, err error)
 	Get_Chapters(urls []string) ([]Chapter, error)
@@ -36,6 +37,20 @@ type DownloaderImpl struct {
 	title_regex   *regexp.Regexp
 	content_regex *regexp.Regexp
 	thread_num    int
+}
+
+func uniqueStrings(input []string) []string {
+	seen := make(map[string]struct{})
+	result := []string{}
+
+	for _, str := range input {
+		if _, exists := seen[str]; !exists {
+			seen[str] = struct{}{} // 空结构体占用 0 字节
+			result = append(result, str)
+		}
+	}
+
+	return result
 }
 
 func (d *DownloaderImpl) Download(url string) (Book, error) {
@@ -83,7 +98,40 @@ func (d *DownloaderImpl) Download(url string) (Book, error) {
 	book.chapters, err = d.Get_Chapters(chapter_urls)
 	return book, nil
 }
-
+func (d *DownloaderImpl) Download_from_file(file_content string, url string) (Book, error) {
+	d.Client = &http.Client{}
+	book := Book{}
+	var err error
+	body := file_content
+	book.name, err = d.Get_Book_Name(string(body))
+	if err != nil {
+		logrus.WithField("downloader", "Download").Error("Error when get book name")
+		return book, err
+	}
+	logrus.WithField("downloader", "Download").Info("Get book name: " + book.name)
+	chapter_urls, prefix, err := d.Get_Chapter_Urls(string(body))
+	if err != nil {
+		logrus.WithField("downloader", "Download").Error("Error when get chapter urls")
+		return book, err
+	}
+	if !prefix {
+		re := regexp.MustCompile(`(https?)://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
+		match := re.FindStringSubmatch(url)
+		if match == nil {
+			logrus.WithField("downloader", "Download").Error("Error when get domain")
+			return book, errors.New("error when get domain")
+		}
+		for i := range chapter_urls {
+			chapter_urls[i] = match[0] + chapter_urls[i]
+		}
+	}
+	book.chapters, err = d.Get_Chapters(chapter_urls)
+	logrus.WithField("downloader", "Download").Debugf("Get %d chapters", len(book.chapters))
+	if err != nil {
+		logrus.WithField("downloader", "Download").Errorf("Error when get chapters %s", err)
+	}
+	return book, nil
+}
 func (d *DownloaderImpl) Get_Book_Name(desc string) (string, error) {
 	match := d.name_regex.FindStringSubmatch(desc)
 	if len(match) < 1 || match[1] == "" {
@@ -103,6 +151,8 @@ func (d *DownloaderImpl) Get_Chapter_Urls(content string) ([]string, bool, error
 	for _, match := range allmatch {
 		urls = append(urls, match[1])
 	}
+	// 去除重复的url
+	urls = uniqueStrings(urls)
 	if strings.HasPrefix(urls[0], "http") {
 		return urls, true, nil
 	} else {
@@ -177,6 +227,7 @@ func (d *DownloaderImpl) Get_Chapter_Content(url string) (title string, content 
 	match := d.title_regex.FindStringSubmatch(string(body))
 	if len(match) < 1 {
 		logrus.WithField("component", "Get_Chapter_Content").Errorf("error getting title: %s", url)
+		logrus.WithField("component", "Get_Chapter_Content").Debugf("body: %s", string(body))
 		return "", "", errors.New("error getting title")
 	}
 	title = match[1]
