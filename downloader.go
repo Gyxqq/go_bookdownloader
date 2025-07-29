@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 type Downloader interface {
 	Download(url string) (Book, error)
 	Get_Book_Name(desc string) (string, error)
-	Get_Chapter_Urls(content string) ([]string, bool, error)
+	Get_Chapter_Urls(content string) (urls []string, prefix bool, err error)
+	Get_Chapters(urls []string) ([]Chapter, error)
+	Get_Chapter_Content(url string) (title string, content string, err error)
 }
 type Book struct {
 	name     string
@@ -93,4 +96,53 @@ func (d *DownloaderImpl) Get_Chapter_Urls(content string) ([]string, bool, error
 	} else {
 		return urls, false, nil
 	}
+}
+
+func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
+	logrus.WithField("component", "Get_Chapters").Info("start getting chapters...")
+	var chapters []Chapter
+	var wg sync.WaitGroup
+	var mut sync.Mutex
+	ch := make(chan struct{}, 100)
+	for url_index, url := range urls {
+		wg.Add(1)
+		go func(index int, url string) {
+			defer wg.Done()
+			ch <- struct{}{}
+			defer func() {
+				<-ch
+			}()
+			title, content, err := d.Get_Chapter_Content(url)
+			if err != nil {
+				logrus.WithField("component", "Get_Chapters").Errorf("error getting chapter: %d content", index)
+				return
+			}
+			mut.Lock()
+			chapters = append(chapters, Chapter{index: index, title: title, content: content})
+			mut.Unlock()
+		}(url_index, url)
+
+	}
+	return chapters, nil
+}
+
+func (d *DownloaderImpl) Get_Chapter_Content(url string) (title string, content string, err error) {
+	logrus.WithField("component", "Get_Chapter_Content").Infof("start getting chapter: %s", url)
+	resp, err := d.Client.Get(url)
+	if err != nil {
+		logrus.WithField("component", "Get_Chapter_Content").Errorf("error getting chapter: %s", url)
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logrus.WithField("component", "Get_Chapter_Content").Errorf("error reading body: %s", url)
+		return "", "", err
+	}
+	title = d.title_regex.FindStringSubmatch(string(body))[1]
+	contents := d.content_regex.FindAllStringSubmatch(string(body), -1)
+	for _, c := range contents {
+		content = content + c[1]
+	}
+	return title, content, nil
 }
