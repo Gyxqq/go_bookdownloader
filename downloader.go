@@ -1,13 +1,17 @@
-package godown
+package main
 
 import (
 	"errors"
-	"github.com/sirupsen/logrus"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 type Downloader interface {
@@ -53,6 +57,7 @@ func (d *DownloaderImpl) Download(url string) (Book, error) {
 		logrus.WithField("downloader", "Download").Error("Error when get book name")
 		return book, err
 	}
+	logrus.WithField("downloader", "Download").Info("Get book name: " + book.name)
 	chapter_urls, prefix, err := d.Get_Chapter_Urls(string(body))
 	if err != nil {
 		logrus.WithField("downloader", "Download").Error("Error when get chapter urls")
@@ -69,6 +74,7 @@ func (d *DownloaderImpl) Download(url string) (Book, error) {
 			chapter_urls[i] = match[0] + chapter_urls[i]
 		}
 	}
+	book.chapters, err = d.Get_Chapters(chapter_urls)
 	return book, nil
 }
 
@@ -121,14 +127,25 @@ func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
 			chapters = append(chapters, Chapter{index: index, title: title, content: content})
 			mut.Unlock()
 		}(url_index, url)
-
+		time.Sleep(time.Millisecond * 100)
 	}
+	wg.Wait()
+	logrus.WithField("component", "Get_Chapters").Infof("Got %d chapters", len(chapters))
+	sort.Slice(chapters, func(i, j int) bool {
+		return chapters[i].index < chapters[j].index
+	})
 	return chapters, nil
 }
 
 func (d *DownloaderImpl) Get_Chapter_Content(url string) (title string, content string, err error) {
 	logrus.WithField("component", "Get_Chapter_Content").Infof("start getting chapter: %s", url)
-	resp, err := d.Client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logrus.WithField("component", "Get_Chapter_Content").Errorf("failed to create request: %s", err)
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36")
+	resp, err := d.Client.Do(req)
 	if err != nil {
 		logrus.WithField("component", "Get_Chapter_Content").Errorf("error getting chapter: %s", url)
 		return "", "", err
@@ -139,7 +156,13 @@ func (d *DownloaderImpl) Get_Chapter_Content(url string) (title string, content 
 		logrus.WithField("component", "Get_Chapter_Content").Errorf("error reading body: %s", url)
 		return "", "", err
 	}
-	title = d.title_regex.FindStringSubmatch(string(body))[1]
+	match := d.title_regex.FindStringSubmatch(string(body))
+	if len(match) < 1 {
+		logrus.WithField("component", "Get_Chapter_Content").Errorf("error getting title: %s", url)
+		fmt.Println(string(body))
+		return "", "", errors.New("error getting title")
+	}
+	title = match[1]
 	contents := d.content_regex.FindAllStringSubmatch(string(body), -1)
 	for _, c := range contents {
 		content = content + c[1]
