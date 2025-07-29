@@ -100,7 +100,7 @@ func main() {
 
 	if err != nil {
 		logrus.WithField("downloader", "Download").Errorf("Error when download book %s", err)
-		return
+		os.Exit(-1)
 	}
 	logrus.WithField("downloader", "Download").Info("Download book success")
 	if *outname == "" {
@@ -109,7 +109,7 @@ func main() {
 	file, err := os.Create(*outname + ".txt")
 	if err != nil {
 		logrus.WithField("downloader", "Download").Errorf("Error when create file %s", err)
-		return
+		os.Exit(-1)
 	}
 	defer file.Close()
 	for _, chapter := range book.chapters {
@@ -117,4 +117,5 @@ func main() {
 		logrus.WithField("downloader", "Download").Infof("Write chapter %s", chapter.title)
 	}
 	logrus.WithField("downloader", "Download").Info("Write book success")
+
 }

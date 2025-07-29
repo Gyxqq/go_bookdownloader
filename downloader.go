@@ -127,6 +127,9 @@ func (d *DownloaderImpl) Download_from_file(file_content string, url string) (Bo
 	}
 	book.chapters, err = d.Get_Chapters(chapter_urls)
 	logrus.WithField("downloader", "Download").Debugf("Get %d chapters", len(book.chapters))
+	for i := range book.chapters {
+		logrus.WithField("downloader", "Download").Debugf("Get chapter %d", i)
+	}
 	if err != nil {
 		logrus.WithField("downloader", "Download").Errorf("Error when get chapters %s", err)
 	}
