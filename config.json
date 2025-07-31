@@ -2,5 +2,5 @@
     "name_regex": "<h1\\s+class=\"book-name\">.*?<a\\s+[^>]*title=\"([^\"]+)\"",
     "chapter_regex": "<div class=\"col-md-6 item\">\\s*<a\\s+href=\"([^\"]+)\"[^>]*>[^<]+</a>\\s*</div>",
     "title_regex": "<h1\\s+class=\"cont-title\">([^<]+)</h1>",
-    "content_regex": "<p>(.*?)</p>"
+    "content_regex": "<p>\\s*(.*?)\\s*</p>"
 }

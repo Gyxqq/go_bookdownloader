@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -51,9 +52,11 @@ func main() {
 	default:
 		logrus.SetLevel(logrus.InfoLevel)
 	}
-	if *mainpage == "" {
+	if *mainpage == "" && *input == "" { // if both are empty, ask for url
 		fmt.Print("输入小说主页url:")
-		fmt.Scanln(&mainpage)
+		var s string
+		fmt.Scanln(&s)
+		mainpage = &s
 	}
 	down := DownloaderImpl{thread_num: *max_threads}
 	if *config != "" {
@@ -78,44 +81,103 @@ func main() {
 		down.title_regex = regexp.MustCompile(conf.Title_regex)
 		logrus.WithField("component", "main").Infof("load title regex %s", conf.Title_regex)
 	} else {
-		down.name_regex = regexp.MustCompile(`<meta\s+property="og:novel:book_name"\s+content="([^"]+)"\s*/?>`)
+		down.name_regex = regexp.MustCompile(`<meta\s+property="og:novel:book_name"\s+content="([^"]+)"\s*\/?>`)
 		down.chapter_regex = regexp.MustCompile(`<dd><a\s+href\s*=\s*"([^"]+)">`)
-		down.title_regex = regexp.MustCompile(`<h1\s+class="wap_none">\s*(.*?)\s*</h1>`)
-		down.content_regex = regexp.MustCompile(`<br\s*/?>\s*([^<]+?)\s*<br\s*/?>`)
+		down.title_regex = regexp.MustCompile(`<h1\s+class="wap_none">\s*(.*?)\s*<\/h1>`)
+		down.content_regex = regexp.MustCompile(`<br\s*\/?>\s*([^<]+?)\s*<br\s*\/?>`)
 	}
 	var err error
 	var book Book
+	var chapter_urls []string
+
 	if *input == "" {
-		book, err = down.Download(*mainpage)
+		book, chapter_urls, err = down.GetBookInfoAndChapterURLs(*mainpage)
 	} else {
 		var data []byte
 		data, err = os.ReadFile(*input)
 		if err != nil {
-			logrus.WithField("downloader", "Download").Errorf("Error when read input file %s", err)
-			book, err = down.Download(*mainpage)
+			logrus.WithField("downloader", "main").Errorf("Error when read input file %s", err)
+			book, chapter_urls, err = down.GetBookInfoAndChapterURLs(*mainpage)
+		} else {
+			logrus.WithField("downloader", "main").Info("Read mainpage from file")
+			book, chapter_urls, err = down.GetBookInfoAndChapterURLs_from_file(string(data), *mainpage)
 		}
-		logrus.WithField("downloader", "Download").Info("Read mainpage from file")
-		book, err = down.Download_from_file(string(data), *mainpage)
 	}
 
 	if err != nil {
-		logrus.WithField("downloader", "Download").Errorf("Error when download book %s", err)
+		logrus.WithField("downloader", "main").Errorf("Error when getting book info %s", err)
 		os.Exit(-1)
 	}
-	logrus.WithField("downloader", "Download").Info("Download book success")
+
 	if *outname == "" {
 		*outname = book.name
 	}
-	file, err := os.Create(*outname + ".txt")
+	progress_filename := *outname + ".progress"
+	var downloaded_urls = make(map[string]bool)
+
+	if _, err := os.Stat(progress_filename); err == nil {
+		logrus.WithField("component", "main").Infof("Progress file found: %s", progress_filename)
+		file, err := os.Open(progress_filename)
+		if err != nil {
+			logrus.WithField("component", "main").Warnf("Could not read progress file: %s", err)
+		} else {
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				downloaded_urls[scanner.Text()] = true
+			}
+			file.Close()
+		}
+		logrus.WithField("component", "main").Infof("Found %d downloaded chapters in progress file.", len(downloaded_urls))
+	}
+
+	var urls_to_download []string
+	for _, url := range chapter_urls {
+		if !downloaded_urls[url] {
+			urls_to_download = append(urls_to_download, url)
+		}
+	}
+
+	logrus.WithField("component", "main").Infof("%d chapters already downloaded. %d new chapters to download.", len(downloaded_urls), len(urls_to_download))
+
+	if len(urls_to_download) == 0 {
+		logrus.WithField("component", "main").Info("All chapters already downloaded. Exiting.")
+		os.Exit(0)
+	}
+
+	new_chapters, err := down.Get_Chapters(urls_to_download)
 	if err != nil {
-		logrus.WithField("downloader", "Download").Errorf("Error when create file %s", err)
+		logrus.WithField("downloader", "main").Errorf("Error when downloading chapters %s", err)
 		os.Exit(-1)
 	}
-	defer file.Close()
-	for _, chapter := range book.chapters {
-		file.WriteString(chapter.title + "\n" + chapter.content + "\n")
-		logrus.WithField("downloader", "Download").Infof("Write chapter %s", chapter.title)
-	}
-	logrus.WithField("downloader", "Download").Info("Write book success")
 
+	book.chapters = append(book.chapters, new_chapters...)
+
+	output_file, err := os.OpenFile(*outname+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logrus.WithField("downloader", "main").Errorf("Error when opening output file %s", err)
+		os.Exit(-1)
+	}
+	defer output_file.Close()
+
+	progress_file, err := os.OpenFile(progress_filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logrus.WithField("downloader", "main").Errorf("Error when opening progress file %s", err)
+		os.Exit(-1)
+	}
+	defer progress_file.Close()
+
+	for _, chapter := range new_chapters {
+		_, err := output_file.WriteString(chapter.title + "\n" + chapter.content + "\n")
+		if err != nil {
+			logrus.WithField("downloader", "main").Errorf("Error writing chapter %s to file: %s", chapter.title, err)
+			continue // Or handle error more gracefully
+		}
+		_, err = progress_file.WriteString(chapter.url + "\n")
+		if err != nil {
+			logrus.WithField("downloader", "main").Errorf("Error writing to progress file for chapter %s: %s", chapter.title, err)
+		}
+		logrus.WithField("downloader", "main").Infof("Wrote chapter %s", chapter.title)
+	}
+
+	logrus.WithField("downloader", "main").Info("Write book success")
 }

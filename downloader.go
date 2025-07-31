@@ -14,8 +14,8 @@ import (
 )
 
 type Downloader interface {
-	Download(url string) (Book, error)
-	Download_from_file(file string) (Book, error)
+	GetBookInfoAndChapterURLs(url string) (Book, []string, error)
+	GetBookInfoAndChapterURLs_from_file(file_content string, url string) (Book, []string, error)
 	Get_Book_Name(desc string) (string, error)
 	Get_Chapter_Urls(content string) (urls []string, prefix bool, err error)
 	Get_Chapters(urls []string) ([]Chapter, error)
@@ -29,6 +29,7 @@ type Chapter struct {
 	index   int
 	title   string
 	content string
+	url     string
 }
 type DownloaderImpl struct {
 	Client        *http.Client
@@ -45,7 +46,7 @@ func uniqueStrings(input []string) []string {
 
 	for _, str := range input {
 		if _, exists := seen[str]; !exists {
-			seen[str] = struct{}{} // 空结构体占用 0 字节
+			seen[str] = struct{}{}
 			result = append(result, str)
 		}
 	}
@@ -53,88 +54,81 @@ func uniqueStrings(input []string) []string {
 	return result
 }
 
-func (d *DownloaderImpl) Download(url string) (Book, error) {
+func (d *DownloaderImpl) GetBookInfoAndChapterURLs(url string) (Book, []string, error) {
 	d.Client = &http.Client{}
 	book := Book{}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when create request")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when create request")
+		return book, nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36")
 	resp, err := d.Client.Do(req)
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when get book main page")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when get book main page")
+		return book, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when io read book main page")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when io read book main page")
+		return book, nil, err
 	}
 	book.name, err = d.Get_Book_Name(string(body))
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when get book name")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when get book name")
+		return book, nil, err
 	}
-	logrus.WithField("downloader", "Download").Info("Get book name: " + book.name)
+	logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Info("Get book name: " + book.name)
 	chapter_urls, prefix, err := d.Get_Chapter_Urls(string(body))
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when get chapter urls")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when get chapter urls")
+		return book, nil, err
 	}
 	if !prefix {
 		re := regexp.MustCompile(`(https?)://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
 		match := re.FindStringSubmatch(url)
 		if match == nil {
-			logrus.WithField("downloader", "Download").Error("Error when get domain")
-			return book, errors.New("error when get domain")
+			logrus.WithField("downloader", "GetBookInfoAndChapterURLs").Error("Error when get domain")
+			return book, nil, errors.New("error when get domain")
 		}
 		for i := range chapter_urls {
 			chapter_urls[i] = match[0] + chapter_urls[i]
 		}
 	}
-	book.chapters, err = d.Get_Chapters(chapter_urls)
-	return book, nil
+	return book, chapter_urls, nil
 }
-func (d *DownloaderImpl) Download_from_file(file_content string, url string) (Book, error) {
+
+func (d *DownloaderImpl) GetBookInfoAndChapterURLs_from_file(file_content string, url string) (Book, []string, error) {
 	d.Client = &http.Client{}
 	book := Book{}
 	var err error
 	body := file_content
 	book.name, err = d.Get_Book_Name(string(body))
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when get book name")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs_from_file").Error("Error when get book name")
+		return book, nil, err
 	}
-	logrus.WithField("downloader", "Download").Info("Get book name: " + book.name)
+	logrus.WithField("downloader", "GetBookInfoAndChapterURLs_from_file").Info("Get book name: " + book.name)
 	chapter_urls, prefix, err := d.Get_Chapter_Urls(string(body))
 	if err != nil {
-		logrus.WithField("downloader", "Download").Error("Error when get chapter urls")
-		return book, err
+		logrus.WithField("downloader", "GetBookInfoAndChapterURLs_from_file").Error("Error when get chapter urls")
+		return book, nil, err
 	}
 	if !prefix {
 		re := regexp.MustCompile(`(https?)://([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
 		match := re.FindStringSubmatch(url)
 		if match == nil {
-			logrus.WithField("downloader", "Download").Error("Error when get domain")
-			return book, errors.New("error when get domain")
+			logrus.WithField("downloader", "GetBookInfoAndChapterURLs_from_file").Error("Error when get domain")
+			return book, nil, errors.New("error when get domain")
 		}
 		for i := range chapter_urls {
 			chapter_urls[i] = match[0] + chapter_urls[i]
 		}
 	}
-	book.chapters, err = d.Get_Chapters(chapter_urls)
-	logrus.WithField("downloader", "Download").Debugf("Get %d chapters", len(book.chapters))
-	for i := range book.chapters {
-		logrus.WithField("downloader", "Download").Debugf("Get chapter %d", i)
-	}
-	if err != nil {
-		logrus.WithField("downloader", "Download").Errorf("Error when get chapters %s", err)
-	}
-	return book, nil
+	return book, chapter_urls, nil
 }
+
 func (d *DownloaderImpl) Get_Book_Name(desc string) (string, error) {
 	match := d.name_regex.FindStringSubmatch(desc)
 	if len(match) < 1 || match[1] == "" {
@@ -154,7 +148,6 @@ func (d *DownloaderImpl) Get_Chapter_Urls(content string) ([]string, bool, error
 	for _, match := range allmatch {
 		urls = append(urls, match[1])
 	}
-	// 去除重复的url
 	urls = uniqueStrings(urls)
 	if strings.HasPrefix(urls[0], "http") {
 		return urls, true, nil
@@ -195,7 +188,7 @@ func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
 				return
 			}
 			mut.Lock()
-			chapters = append(chapters, Chapter{index: index, title: title, content: content})
+			chapters = append(chapters, Chapter{index: index, title: title, content: content, url: url})
 			mut.Unlock()
 		}(url_index, url)
 		time.Sleep(time.Millisecond * 100)
