@@ -109,6 +109,11 @@ func main() {
 		os.Exit(-1)
 	}
 
+	chapter_url_map := make(map[string]int)
+	for i, url := range chapter_urls {
+		chapter_url_map[url] = i
+	}
+
 	if *outname == "" {
 		*outname = book.name
 	}
@@ -144,13 +149,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	new_chapters, err := down.Get_Chapters(urls_to_download)
+	new_chapters, err := down.Get_Chapters(urls_to_download, chapter_url_map)
 	if err != nil {
 		logrus.WithField("downloader", "main").Errorf("Error when downloading chapters %s", err)
 		os.Exit(-1)
 	}
 
-	book.chapters = append(book.chapters, new_chapters...)
+	book.chapters = new_chapters
 
 	output_file, err := os.OpenFile(*outname+".txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -166,7 +171,7 @@ func main() {
 	}
 	defer progress_file.Close()
 
-	for _, chapter := range new_chapters {
+	for _, chapter := range book.chapters {
 		_, err := output_file.WriteString(chapter.title + "\n" + chapter.content + "\n")
 		if err != nil {
 			logrus.WithField("downloader", "main").Errorf("Error writing chapter %s to file: %s", chapter.title, err)

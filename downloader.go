@@ -156,15 +156,15 @@ func (d *DownloaderImpl) Get_Chapter_Urls(content string) ([]string, bool, error
 	}
 }
 
-func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
+func (d *DownloaderImpl) Get_Chapters(urls []string, chapter_url_map map[string]int) ([]Chapter, error) {
 	logrus.WithField("component", "Get_Chapters").Info("start getting chapters...")
 	var chapters []Chapter
 	var wg sync.WaitGroup
 	var mut sync.Mutex
 	ch := make(chan struct{}, d.thread_num)
-	for url_index, url := range urls {
+	for _, url := range urls {
 		wg.Add(1)
-		go func(index int, url string) {
+		go func(url string) {
 			defer wg.Done()
 			ch <- struct{}{}
 			defer func() {
@@ -177,20 +177,20 @@ func (d *DownloaderImpl) Get_Chapters(urls []string) ([]Chapter, error) {
 					if err == nil {
 						break
 					}
-					logrus.WithField("component", "Get_Chapters").Warnf("error getting chapter: %d content, retrying... (%d/5)", index, i+1)
+					logrus.WithField("component", "Get_Chapters").Warnf("error getting chapter: %s content, retrying... (%d/5)", url, i+1)
 					time.Sleep(time.Second * 2)
 				}
 				if err != nil {
-					logrus.WithField("component", "Get_Chapters").Errorf("failed to get chapter: %d content after 5 retries", index)
+					logrus.WithField("component", "Get_Chapters").Errorf("failed to get chapter: %s content after 5 retries", url)
 					return
 				}
-				logrus.WithField("component", "Get_Chapters").Errorf("error getting chapter: %d content but retries succeded", index)
+				logrus.WithField("component", "Get_Chapters").Errorf("error getting chapter: %s content but retries succeded", url)
 				return
 			}
 			mut.Lock()
-			chapters = append(chapters, Chapter{index: index, title: title, content: content, url: url})
+			chapters = append(chapters, Chapter{index: chapter_url_map[url], title: title, content: content, url: url})
 			mut.Unlock()
-		}(url_index, url)
+		}(url)
 		time.Sleep(time.Millisecond * 100)
 	}
 	wg.Wait()
